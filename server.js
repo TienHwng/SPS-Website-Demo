@@ -6,7 +6,7 @@ const morgan = require('morgan');
 const { readState, writeState, resetState } = require('./server/store');
 
 const app = express();
-const port = Number(process.env.PORT || 3000);
+const preferredPort = Number(process.env.PORT || 3000);
 const publicDir = __dirname;
 
 app.disable('x-powered-by');
@@ -81,6 +81,27 @@ app.use((error, req, res, next) => {
   res.status(500).json({ ok: false, error: 'Internal server error.' });
 });
 
-app.listen(port, () => {
-  console.log(`Smart Parking app listening on http://localhost:${port}`);
-});
+function startServer(port, retries = 0) {
+  const server = app.listen(port, () => {
+    console.log(`Smart Parking app listening on http://localhost:${port}`);
+  });
+
+  server.on('error', error => {
+    const canRetry = error.code === 'EADDRINUSE' && !process.env.PORT && retries < 10;
+    if (canRetry) {
+      const nextPort = port + 1;
+      console.warn(`Port ${port} is already in use. Trying ${nextPort}...`);
+      startServer(nextPort, retries + 1);
+      return;
+    }
+
+    if (error.code === 'EADDRINUSE') {
+      console.error(`Port ${port} is already in use. Stop the existing process or set PORT to another value.`);
+    } else {
+      console.error(error);
+    }
+    process.exit(1);
+  });
+}
+
+startServer(preferredPort);

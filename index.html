@@ -60,7 +60,7 @@
                 </div>
                 <div class="input-group" id="email-group">
                     <label>Username (HCMUT Email)</label>
-                    <input type="text" id="mock-username" value="mock_student@hcmut.edu.vn" disabled class="form-input">
+                    <input type="email" id="mock-username" value="mock_student@hcmut.edu.vn" class="form-input" autocomplete="username">
                 </div>
                 <button type="submit" class="btn btn-primary w-100"><i class='bx bx-lock-alt'></i> Authenticate Via SSO</button>
             </form>
@@ -75,11 +75,24 @@
         const emailInput = document.getElementById('mock-username');
         const emailGroup = document.getElementById('email-group');
         if (role === 'visitor') {
+            emailInput.type = 'text';
             emailInput.value = 'N/A (Kiosk / Signage Mode)';
+            emailInput.readOnly = true;
             emailGroup.style.opacity = '0.5';
         } else {
-            emailInput.value = 'mock_' + role + '@hcmut.edu.vn';
+            const demoEmails = {
+                student: 'mock_student@hcmut.edu.vn',
+                staff: 'mock_staff@hcmut.edu.vn',
+                operator: 'op@hcmut.edu.vn',
+                finance: 'finance@hcmut.edu.vn',
+                admin: 'admin@hcmut.edu.vn'
+            };
+            emailInput.type = 'email';
+            emailInput.value = demoEmails[role] || '';
+            emailInput.readOnly = false;
             emailGroup.style.opacity = '1';
+            emailInput.focus();
+            emailInput.select();
         }
     }
     </script>
@@ -399,7 +412,7 @@
                     <div class="glass-card">
                         <h3><i class='bx bx-group'></i> User Role Management</h3>
                         <div class="flex-bw mt-2" style="gap:0.5rem;">
-                            <input type="text" id="user-search" class="form-input" placeholder="Search by Employee ID or Email…">
+                            <input type="text" id="user-search" class="form-input" placeholder="Search by ID, Email, Name, or Plate…">
                             <button class="btn btn-primary" id="btn-user-search"><i class='bx bx-search'></i></button>
                         </div>
                         <div id="user-search-results" class="mt-2"></div>

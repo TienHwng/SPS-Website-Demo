@@ -19,6 +19,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const appContainer   = document.getElementById('app-container');
     const loginForm      = document.getElementById('login-form');
     const roleSelect     = document.getElementById('role-select');
+    const mockUsername   = document.getElementById('mock-username');
     const currentUserName  = document.getElementById('current-user-name');
     const currentRoleBadge = document.getElementById('current-role-badge');
     const navList        = document.getElementById('nav-list');
@@ -33,6 +34,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         signage:  document.getElementById('view-signage')
     };
 
+    const ROLE_LABELS = {
+        student: 'Learner',
+        staff: 'Faculty / Staff',
+        operator: 'Gate Operator',
+        finance: 'Finance Officer',
+        admin: 'System Admin'
+    };
+
     function escapeHtml(value) {
         return String(value ?? '').replace(/[&<>"']/g, char => ({
             '&': '&amp;',
@@ -45,6 +54,58 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function formatVnd(value) {
         return `${Number(value || 0).toLocaleString('en-US')} VND`;
+    }
+
+    function getRoleLabel(roleId) {
+        return ROLE_LABELS[roleId] || roleId;
+    }
+
+    function getUserProfileKey(account) {
+        const rawId = String(account.empId || account.id || account.email || 'user').toLowerCase();
+        return `account_${rawId.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')}`;
+    }
+
+    function findUserProfileById(empId) {
+        return Object.values(window.HCMUT_DATACORE.users || {}).find(user => user.id === empId) || null;
+    }
+
+    function ensureUserProfileForAccount(account) {
+        const existing = findUserProfileById(account.empId);
+        if (existing) return existing;
+
+        const baseKey = getUserProfileKey(account);
+        let key = baseKey;
+        let suffix = 2;
+        while (window.HCMUT_DATACORE.users[key]) {
+            key = `${baseKey}_${suffix}`;
+            suffix++;
+        }
+
+        window.HCMUT_DATACORE.users[key] = {
+            id: account.empId,
+            name: account.name,
+            email: account.email,
+            role: account.role || getRoleLabel(account.roleId),
+            roleId: account.roleId,
+            balance: 0,
+            debt: 0
+        };
+        return window.HCMUT_DATACORE.users[key];
+    }
+
+    function syncManagedAccountRole(account, roleId) {
+        const role = getRoleLabel(roleId);
+        account.role = role;
+        account.roleId = roleId;
+
+        const profile = ensureUserProfileForAccount(account);
+        Object.assign(profile, {
+            name: account.name,
+            email: account.email,
+            role,
+            roleId
+        });
+        return profile;
     }
 
     function csvCell(value) {
@@ -140,13 +201,40 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (roleKey === 'visitor') {
             openSignageKiosk();
         } else {
-            currentUser = window.HCMUT_DATACORE.users[roleKey];
+            currentUser = findUserByEmail(mockUsername?.value);
+            if (!currentUser) {
+                const sampleEmails = Object.values(window.HCMUT_DATACORE.users)
+                    .map(user => user.email)
+                    .filter(Boolean)
+                    .slice(0, 6)
+                    .join(', ');
+                alert(`Email is not available in mock data. Try: ${sampleEmails}.`);
+                mockUsername?.focus();
+                return;
+            }
+            roleSelect.value = currentUser.roleId;
             login(currentUser);
         }
     });
 
     btnLogout.addEventListener('click', logout);
     document.getElementById('exit-signage').addEventListener('click', logout);
+
+    function findUserByEmail(email) {
+        const normalizedEmail = String(email || '').trim().toLowerCase();
+        if (!normalizedEmail) return null;
+        const user = Object.values(window.HCMUT_DATACORE.users).find(item =>
+            String(item.email || '').trim().toLowerCase() === normalizedEmail
+        );
+        if (user) return user;
+
+        const account = window.HCMUT_DATACORE.userAccounts.find(item =>
+            String(item.email || '').trim().toLowerCase() === normalizedEmail
+        );
+        if (!account) return null;
+
+        return ensureUserProfileForAccount(account);
+    }
 
     function login(user) {
         loginScreen.classList.add('hidden');
@@ -248,7 +336,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (viewId === 'student' || viewId === 'staff') renderLearnerOverview();
         if (viewId === 'operator') { renderOperatorDashboard(); renderActivityLog(); renderIntegrationStatus('integration-status-list'); }
         if (viewId === 'finance')  { renderFinanceLog(); renderRefundTable(''); }
-        if (viewId === 'admin')    { renderAdminLog(); renderIntegrationStatus('admin-integration-list'); syncUIFromConfig(); }
+        if (viewId === 'admin')    { renderAdminLog(); renderIntegrationStatus('admin-integration-list'); renderUserSearchResults(document.getElementById('user-search')?.value || ''); syncUIFromConfig(); }
     }
 
     // =====================================================================
@@ -1035,12 +1123,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!container) return;
         container.innerHTML = '';
         const q = String(query || '').toLowerCase();
-        if (!q) { container.innerHTML = '<p class="sub-text" style="padding:0.5rem;">Enter an Employee ID or email to search.</p>'; return; }
 
         const results = window.HCMUT_DATACORE.userAccounts.filter(u =>
             String(u.empId || '').toLowerCase().includes(q) ||
             String(u.email || '').toLowerCase().includes(q) ||
-            String(u.name || '').toLowerCase().includes(q)
+            String(u.name || '').toLowerCase().includes(q) ||
+            String(u.role || '').toLowerCase().includes(q) ||
+            String(u.department || '').toLowerCase().includes(q) ||
+            String(u.plate || '').toLowerCase().includes(q) ||
+            String(u.status || '').toLowerCase().includes(q)
         );
 
         if (results.length === 0) {
@@ -1048,23 +1139,40 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
-        const roleOptions = ['student','staff','operator','finance','admin'].map(r =>
-            `<option value="${escapeHtml(r)}">${escapeHtml(window.HCMUT_DATACORE.users[r]?.role || r)}</option>`
+        const summary = document.createElement('p');
+        summary.className = 'sub-text user-results-summary';
+        summary.textContent = q ? `${results.length} matching people found.` : `${results.length} demo people loaded from frontend mock data.`;
+        container.appendChild(summary);
+
+        const roleOptions = Object.entries(ROLE_LABELS).map(([roleId, label]) =>
+            `<option value="${escapeHtml(roleId)}">${escapeHtml(label)}</option>`
         ).join('');
 
         results.forEach(u => {
+            const normalizedStatus = String(u.status || 'Active').toLowerCase();
+            const statusClass = normalizedStatus.includes('debt') || normalizedStatus.includes('pending')
+                ? 'badge-warn'
+                : normalizedStatus.includes('suspended')
+                    ? 'badge-error'
+                    : 'badge-success';
+            const isSignedInAdmin = currentUser?.id === u.empId;
             const div = document.createElement('div');
             div.className = 'user-result-row';
             div.innerHTML = `
-                <div>
+                <div class="user-result-main">
                     <strong>${escapeHtml(u.name)}</strong> <small class="sub-text">${escapeHtml(u.empId)}</small><br>
                     <small class="sub-text">${escapeHtml(u.email)}</small>
+                    <div class="person-meta">
+                        <span><i class='bx bx-building-house'></i>${escapeHtml(u.department || 'N/A')}</span>
+                        <span><i class='bx bx-car'></i>${escapeHtml(u.plate || 'N/A')}</span>
+                    </div>
                 </div>
-                <div style="display:flex; gap:0.5rem; align-items:center;">
-                    <select class="form-input role-select-inline" data-empid="${escapeHtml(u.empId)}" style="width:auto; padding:0.4rem; font-size:0.85rem;">
+                <div class="user-result-actions">
+                    <span class="badge ${statusClass}">${escapeHtml(u.status || 'Active')}</span>
+                    <select class="form-input role-select-inline" data-empid="${escapeHtml(u.empId)}" style="width:auto; padding:0.4rem; font-size:0.85rem;" ${isSignedInAdmin ? 'disabled' : ''}>
                         ${roleOptions}
                     </select>
-                    <button class="btn btn-sm btn-primary" type="button">Assign</button>
+                    <button class="btn btn-sm btn-primary" type="button" ${isSignedInAdmin ? 'disabled title="Current signed-in admin"' : ''}>${isSignedInAdmin ? 'Signed in' : 'Assign'}</button>
                 </div>
             `;
             // Pre-select current role
@@ -1076,17 +1184,41 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     window._assignRole = function(empId) {
+        if (currentUser?.roleId !== 'admin') {
+            alert('Only System Admin can assign roles.');
+            return;
+        }
+        if (currentUser?.id === empId) {
+            alert('You cannot change the role of the currently signed-in admin account.');
+            return;
+        }
+
         const sel = Array.from(document.querySelectorAll('.role-select-inline')).find(el => el.dataset.empid === empId);
         if (!sel) return;
         const newRoleId = sel.value;
         const u = window.HCMUT_DATACORE.userAccounts.find(x => x.empId === empId);
         if (!u) return;
+
+        if (u.roleId === newRoleId) {
+            alert(`${u.name} already has the ${getRoleLabel(newRoleId)} role.`);
+            return;
+        }
+
         const oldRole = u.role;
-        const newRole = window.HCMUT_DATACORE.users[newRoleId]?.role || newRoleId;
-        u.role = newRole; u.roleId = newRoleId;
+        const profile = syncManagedAccountRole(u, newRoleId);
+        const newRole = getRoleLabel(newRoleId);
+
+        if (currentUser?.id === profile.id) {
+            currentUser = profile;
+            currentRoleBadge.textContent = profile.role;
+            currentRoleBadge.className = `badge role-badge-${profile.roleId}`;
+        }
+
         pushLog('Admin', currentUser?.id || 'AD99', 'Role Assignment', 'System', 'Completed', `${empId}: ${oldRole} → ${newRole} (UC-09)`, 'manual');
+        setupGateSimulator();
+        renderUserSearchResults(document.getElementById('user-search')?.value || '');
         renderAdminLog();
-        alert(`✅ Role updated for ${u.name}: ${oldRole} → ${newRole} (UC-09). Audit log recorded.`);
+        alert(`✅ Role updated for ${u.name}: ${oldRole} → ${newRole}.\nLogin email ${u.email} now opens the ${newRole} dashboard.`);
     };
 
     // UC-11: System Parameters
