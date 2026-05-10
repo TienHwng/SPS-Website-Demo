@@ -127,11 +127,33 @@
         <!-- Main Content -->
         <main id="main-content">
             <header class="topbar glass-panel">
+                <div class="topbar-left">
+                    <h2 class="topbar-greeting" id="topbar-greeting">Good evening</h2>
+                    <span class="topbar-date" id="topbar-date"></span>
+                </div>
                 <div class="topbar-right">
                     <div class="status-indicator">
                         <span class="dot pulse-green"></span>
                         <span class="status-text">IoT Network: Online</span>
                     </div>
+                    <div class="music-player">
+                        <button class="icon-btn" title="Toggle Music" id="music-btn">
+                            <i class='bx bx-music' id="music-icon"></i>
+                        </button>
+                        <select id="music-select" class="form-input music-select" title="Choose Track">
+                            <option value="https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3?filename=lofi-study-112191.mp3">Lofi Study</option>
+                            <option value="https://cdn.pixabay.com/download/audio/2022/01/18/audio_d0a13f69d2.mp3">Good Night Chill</option>
+                            <option value="https://cdn.pixabay.com/download/audio/2022/02/07/audio_4ebfc0e1c2.mp3">Ambient Chill</option>
+                            <option value="https://cdn.pixabay.com/download/audio/2022/03/10/audio_c8c8a73467.mp3">Relaxing Lofi</option>
+                        </select>
+                        <div class="volume-control">
+                            <i class='bx bx-volume-low'></i>
+                            <input type="range" id="music-volume" min="0" max="1" step="0.05" value="0.3" class="volume-slider" title="Adjust Volume">
+                        </div>
+                    </div>
+                    <button class="icon-btn" title="Toggle Theme" id="theme-btn">
+                        <i class='bx bx-moon' id="theme-icon"></i>
+                    </button>
                     <button class="icon-btn" title="Alerts" id="notification-btn">
                         <i class='bx bxs-bell'></i>
                         <span class="badge-dot"></span>
@@ -605,7 +627,10 @@
             </div>
         </div>
     </div>
-
+    <!-- Background Music -->
+    <audio id="bg-music" loop>
+        <source src="https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3?filename=lofi-study-112191.mp3">
+    </audio>
 
     <script src="js/mockData.js"></script>
     <script src="js/app.js"></script>

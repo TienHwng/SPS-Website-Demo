@@ -276,6 +276,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         currentRoleBadge.textContent  = user.role;
         currentRoleBadge.className    = `badge role-badge-${user.roleId}`;
 
+        updateTopbar(user);
         setupNavigation(user.roleId);
         const defaultView = getDefaultView(user.roleId);
         switchView(defaultView);
@@ -284,6 +285,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         setupAdminPanels();
         setupFinancePanels();
         syncUIFromConfig();
+        showToast('Welcome', `Signed in as ${user.name} (${user.role})`, 'success', 3000);
+    }
+
+    function updateTopbar(user) {
+        const hour = new Date().getHours();
+        const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+        const greetEl = document.getElementById('topbar-greeting');
+        if (greetEl) greetEl.textContent = `${greeting}, ${(user || currentUser)?.name?.split(' ')[0] || ''}`;
+        const dateEl = document.getElementById('topbar-date');
+        if (dateEl) dateEl.textContent = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
     }
 
     function logout() {
@@ -1346,5 +1357,91 @@ document.addEventListener('DOMContentLoaded', async () => {
     // INIT
     // =====================================================================
     setupGateSimulator(); // pre-populate before login too for gate sim
+
+    // =====================================================================
+    // BACKGROUND MUSIC
+    // =====================================================================
+    const bgMusic = document.getElementById('bg-music');
+    const musicBtn = document.getElementById('music-btn');
+    const musicIcon = document.getElementById('music-icon');
+    const musicSelect = document.getElementById('music-select');
+    let isMusicPlaying = false;
+
+    if (musicBtn && bgMusic) {
+        bgMusic.volume = 0.3; // Light background volume
+
+        const toggleMusic = () => {
+            if (isMusicPlaying) {
+                bgMusic.pause();
+                musicIcon.classList.remove('bx-music');
+                musicIcon.classList.add('bx-volume-mute');
+                isMusicPlaying = false;
+            } else {
+                bgMusic.play().then(() => {
+                    musicIcon.classList.remove('bx-volume-mute');
+                    musicIcon.classList.add('bx-music');
+                    isMusicPlaying = true;
+                }).catch(err => {
+                    console.error("Autoplay prevented or audio source error", err);
+                    showToast('Playback Error', 'Could not play background music.', 'warning');
+                });
+            }
+        };
+
+        musicBtn.addEventListener('click', toggleMusic);
+
+        if (musicSelect) {
+            musicSelect.addEventListener('change', (e) => {
+                bgMusic.src = e.target.value;
+                if (isMusicPlaying) {
+                    bgMusic.play().catch(console.error);
+                }
+            });
+        }
+
+        const volumeSlider = document.getElementById('music-volume');
+        if (volumeSlider) {
+            volumeSlider.addEventListener('input', (e) => {
+                bgMusic.volume = e.target.value;
+            });
+        }
+
+        // Initial state
+        musicIcon.classList.remove('bx-music');
+        musicIcon.classList.add('bx-volume-mute');
+    }
+
+    // =====================================================================
+    // THEME TOGGLE (Dark/Light Mode)
+    // =====================================================================
+    const themeBtn = document.getElementById('theme-btn');
+    const themeIcon = document.getElementById('theme-icon');
+
+    // Check saved theme
+    const savedTheme = localStorage.getItem('sps-theme');
+    if (savedTheme === 'dark') {
+        document.body.classList.add('dark-theme');
+        if (themeIcon) {
+            themeIcon.classList.remove('bx-moon');
+            themeIcon.classList.add('bx-sun');
+        }
+    }
+
+    if (themeBtn) {
+        themeBtn.addEventListener('click', () => {
+            document.body.classList.toggle('dark-theme');
+            const isDark = document.body.classList.contains('dark-theme');
+
+            if (isDark) {
+                themeIcon.classList.remove('bx-moon');
+                themeIcon.classList.add('bx-sun');
+                localStorage.setItem('sps-theme', 'dark');
+            } else {
+                themeIcon.classList.remove('bx-sun');
+                themeIcon.classList.add('bx-moon');
+                localStorage.setItem('sps-theme', 'light');
+            }
+        });
+    }
 
 });
