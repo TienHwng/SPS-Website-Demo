@@ -11,6 +11,7 @@
     <link rel="stylesheet" href="styles/components.css">
 </head>
 <body>
+    <div id="toast-container"></div>
 
     <!-- ===================== LOGIN SCREEN ===================== -->
     <div id="login-screen" class="view active-view flex-center wrapper-bg">
@@ -489,13 +490,39 @@
 
     <!-- ===================== VISITOR SIGNAGE KIOSK ===================== -->
     <div id="view-signage" class="view hidden flex-center signage-bg">
-        <button id="exit-signage" class="btn btn-outline" style="position:absolute;top:20px;right:20px;">Exit Kiosk</button>
+        <button id="exit-signage" class="signage-exit-btn"><i class='bx bx-x'></i></button>
         <div class="led-board">
-            <h1 class="led-title">HCMUT PARKING</h1>
+            <!-- Signage Header -->
+            <div class="led-header">
+                <div class="led-header-brand">
+                    <i class='bx bxs-parking led-header-icon'></i>
+                    <div>
+                        <h1 class="led-title">HCMUT SMART PARKING</h1>
+                        <p class="led-subtitle">Real-time Availability Display</p>
+                    </div>
+                </div>
+                <div class="led-header-meta">
+                    <span class="led-live-badge"><span class="led-live-dot"></span> LIVE</span>
+                    <span class="led-clock" id="signage-clock">--:--:--</span>
+                </div>
+            </div>
+
+            <!-- Zone Grid -->
             <div class="led-zones" id="signage-zones"></div>
-            <div class="led-footer ticker-wrap">
-                <div class="ticker-move">
-                    <p>Welcome to HCMUT Smart Campus. Visitors: please obtain a temporary card at the kiosk. Prepare your ID card at the gate. Thank you.</p>
+
+            <!-- Ticker Footer -->
+            <div class="led-footer">
+                <div class="ticker-wrap">
+                    <div class="ticker-move">
+                        <span class="ticker-item"><i class='bx bx-info-circle'></i> Welcome to HCMUT Smart Campus</span>
+                        <span class="ticker-sep">•</span>
+                        <span class="ticker-item"><i class='bx bx-id-card'></i> Visitors: please obtain a temporary card at the kiosk</span>
+                        <span class="ticker-sep">•</span>
+                        <span class="ticker-item"><i class='bx bx-scan'></i> Prepare your ID card at the gate</span>
+                        <span class="ticker-sep">•</span>
+                        <span class="ticker-item"><i class='bx bx-phone'></i> Need assistance? Contact security at the main gate</span>
+                        <span class="ticker-sep">•</span>
+                    </div>
                 </div>
             </div>
         </div>

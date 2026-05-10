@@ -52,6 +52,37 @@ document.addEventListener('DOMContentLoaded', async () => {
         }[char]));
     }
 
+    // Toast notification system
+    const TOAST_ICONS = {
+        success: 'bx-check-circle',
+        error:   'bx-error-circle',
+        warning: 'bx-error',
+        info:    'bx-info-circle'
+    };
+
+    function showToast(title, message, type = 'info', duration = 4000) {
+        const container = document.getElementById('toast-container');
+        if (!container) return;
+        const toast = document.createElement('div');
+        toast.className = `toast toast-${type}`;
+        toast.innerHTML = `
+            <i class='bx ${TOAST_ICONS[type] || TOAST_ICONS.info} toast-icon'></i>
+            <div class="toast-body">
+                <div class="toast-title">${escapeHtml(title)}</div>
+                <div class="toast-message">${escapeHtml(message)}</div>
+            </div>
+            <button class="toast-close" aria-label="Close"><i class='bx bx-x'></i></button>
+            <div class="toast-progress" style="animation-duration:${duration}ms;"></div>
+        `;
+        const dismiss = () => {
+            toast.classList.add('toast-exit');
+            setTimeout(() => toast.remove(), 260);
+        };
+        toast.querySelector('.toast-close').addEventListener('click', dismiss);
+        container.appendChild(toast);
+        setTimeout(dismiss, duration);
+    }
+
     function formatVnd(value) {
         return `${Number(value || 0).toLocaleString('en-US')} VND`;
     }
@@ -208,7 +239,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     .filter(Boolean)
                     .slice(0, 6)
                     .join(', ');
-                alert(`Email is not available in mock data. Try: ${sampleEmails}.`);
+                showToast('Login Failed', `Email not found in mock data. Try: ${sampleEmails}`, 'error');
                 mockUsername?.focus();
                 return;
             }
@@ -693,15 +724,49 @@ document.addEventListener('DOMContentLoaded', async () => {
         container.innerHTML = '';
         window.HCMUT_DATACORE.parkingZones.forEach(z => {
             const stat = getStatusData(z.capacity, z.occupied);
+            const available = z.capacity - z.occupied;
+            const statusClass = stat.ledClass === 'available' ? 'zone-available'
+                : stat.ledClass === 'nearly-full' ? 'zone-nearly-full' : 'zone-full';
+            const badgeClass = stat.ledClass === 'available' ? 's-available'
+                : stat.ledClass === 'nearly-full' ? 's-nearly-full' : 's-full';
             const div = document.createElement('div');
-            div.className = 'led-zone-row';
+            div.className = `led-zone-card ${statusClass}`;
             div.innerHTML = `
-                <span>[${escapeHtml(z.id)}] ${escapeHtml(z.name.toUpperCase())}</span>
-                <span class="led-status ${stat.ledClass}">${(z.capacity - z.occupied).toString().padStart(3,'0')} ${stat.statusText.toUpperCase()}</span>
+                <div class="led-zone-top">
+                    <div>
+                        <div class="led-zone-name">${escapeHtml(z.name)}</div>
+                        <div class="led-zone-id">${escapeHtml(z.id)}${z.privileged ? ' • RESTRICTED' : ''}</div>
+                    </div>
+                    <span class="led-zone-status-badge ${badgeClass}">${stat.statusText}</span>
+                </div>
+                <div class="led-zone-stats">
+                    <span class="led-zone-count">${available}</span>
+                    <span class="led-zone-count-label">slots available</span>
+                </div>
+                <div class="led-zone-progress">
+                    <div class="led-zone-fill" style="width:${stat.percent}%"></div>
+                </div>
+                <div class="led-zone-capacity">
+                    <span>${z.occupied} occupied</span>
+                    <span>${z.capacity} total</span>
+                </div>
             `;
             container.appendChild(div);
         });
+
+        // Update signage clock
+        updateSignageClock();
     }
+
+    function updateSignageClock() {
+        const clockEl = document.getElementById('signage-clock');
+        if (clockEl) {
+            clockEl.textContent = new Date().toLocaleTimeString('en-US', { hour12: false });
+        }
+    }
+
+    // Keep clock ticking every second
+    setInterval(updateSignageClock, 1000);
 
     // =====================================================================
     // CAMERA SCANNER UI
@@ -779,7 +844,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 window.HCMUT_DATACORE.dispenserStatus.cardsRemaining += 50;
                 updateDispenserUI();
                 pushLog('Operator', currentUser?.id || 'OP00', 'Restock', 'Kiosk', 'Completed', 'Cards restocked (+50) (UC-06)', 'manual');
-                alert('Dispenser restocked with 50 cards. Action logged.');
+                showToast('Dispenser Restocked', '50 cards added. Action logged.', 'success');
             });
             document.getElementById('btn-issue-visitor')?.addEventListener('click', simulateVisitorIssue);
             gateSimulatorBound = true;
@@ -800,14 +865,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         const zone   = window.HCMUT_DATACORE.parkingZones.find(z => z.id === zoneId);
         let userRole = 'Visitor';
         let isVisitor = false;
-        if (!zone) return alert('⚠ Access Denied: Target zone was not found.');
+        if (!zone) return showToast('Access Denied', 'Target zone was not found.', 'error');
 
         if (userId === 'VISITOR_NEW') {
             isVisitor = true;
             // UC-04: check dispenser
             if (window.HCMUT_DATACORE.dispenserStatus.cardsRemaining <= 0) {
                 pushLog('Visitor', 'N/A', 'Entry', zone.name, 'Denied', 'Dispenser Empty — Admin notified (UC-04)', 'entry');
-                return alert('⚠ Cannot issue temporary card: Dispenser is empty! Admin has been notified.');
+                return showToast('Dispenser Empty', 'Cannot issue temporary card. Admin has been notified.', 'error');
             }
         } else {
             const u = Object.values(window.HCMUT_DATACORE.users).find(u => u.id === userId);
@@ -815,20 +880,20 @@ document.addEventListener('DOMContentLoaded', async () => {
             const activeSession = window.HCMUT_DATACORE.activeSessions.find(s => s.userId === userId);
             if (activeSession) {
                 pushLog(userRole, userId, 'Entry', zone.name, 'Denied', 'User already has an active parking session', 'entry');
-                return alert('⚠ Access Denied: This user already has an active parking session.');
+                return showToast('Access Denied', 'This user already has an active parking session.', 'warning');
             }
         }
 
         // UC-01: Check capacity
         if (zone.occupied >= zone.capacity) {
             pushLog(userRole, userId, 'Entry', zone.name, 'Denied', 'Zone Full (UC-01)', 'entry');
-            return alert(`⚠ Access Denied: ${zone.name} is at full capacity.`);
+            return showToast('Zone Full', `${zone.name} is at full capacity.`, 'warning');
         }
 
         // UC-01: Check privilege
         if (zone.privileged && !(userRole.includes('Staff') || userRole.includes('Faculty') || userRole.includes('Admin') || userRole.includes('Operator'))) {
             pushLog(userRole, userId, 'Entry', zone.name, 'Denied', 'Privileged zone — insufficient role (UC-01)', 'entry');
-            return alert(`⚠ Access Denied: ${zone.name} is restricted to Faculty/Staff only.`);
+            return showToast('Access Denied', `${zone.name} is restricted to Faculty/Staff only.`, 'error');
         }
 
         // UC-04: Issue visitor card
@@ -852,14 +917,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     // UC-04: Operator manually issues visitor ticket
     function simulateVisitorIssue() {
         if (window.HCMUT_DATACORE.dispenserStatus.cardsRemaining <= 0) {
-            return alert('⚠ Dispenser is empty. Please restock first.');
+            return showToast('Dispenser Empty', 'Please restock before issuing visitor tickets.', 'warning');
         }
         const zoneId = document.getElementById('sim-zone-select')?.value;
         const zone = window.HCMUT_DATACORE.parkingZones.find(z => z.id === zoneId)
             || window.HCMUT_DATACORE.parkingZones.find(z => !z.privileged && z.occupied < z.capacity);
-        if (!zone) return alert('⚠ No available public zone for visitor ticket issue.');
-        if (zone.privileged) return alert(`⚠ Access Denied: ${zone.name} is restricted to Faculty/Staff only.`);
-        if (zone.occupied >= zone.capacity) return alert(`⚠ Access Denied: ${zone.name} is at full capacity.`);
+        if (!zone) return showToast('No Zone Available', 'No available public zone for visitor ticket.', 'warning');
+        if (zone.privileged) return showToast('Access Denied', `${zone.name} is restricted to Faculty/Staff only.`, 'error');
+        if (zone.occupied >= zone.capacity) return showToast('Zone Full', `${zone.name} is at full capacity.`, 'warning');
 
         const res = confirm('Issue temporary paper ticket and open gate for unregistered visitor?');
         if (!res) return;
@@ -881,7 +946,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const sessionIdx = window.HCMUT_DATACORE.activeSessions.findIndex(s => isVisitorSel ? s.isVisitor : s.userId === userId);
 
         if (sessionIdx === -1) {
-            return alert('⚠ UC-02 Error: No active parking session found for this user.');
+            return showToast('No Active Session', 'No active parking session found for this user.', 'warning');
         }
 
         const session  = window.HCMUT_DATACORE.activeSessions[sessionIdx];
@@ -889,7 +954,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const userObj  = isVisitorSel ? null : Object.values(window.HCMUT_DATACORE.users).find(u => u.id === session.userId);
         const roleType = session.isVisitor ? 'Visitor' : (userObj?.role || 'Unknown');
         const fee      = calculateOutstandingFee(session);
-        if (!zone) return alert('⚠ UC-02 Error: Session zone was not found.');
+        if (!zone) return showToast('Error', 'Session zone was not found.', 'error');
 
         // UC-03: insufficient balance check
         if (userObj && userObj.balance < fee && !session.isVisitor) {
@@ -914,7 +979,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         renderMap();
         renderOperatorDashboard();
         if (currentUser?.roleId === 'student' || currentUser?.roleId === 'staff') renderLearnerOverview();
-        alert(`✅ Exit Processed.\nRole: ${roleType}\nFee: ${formatVnd(fee)}\nZone: ${zone.name}`);
+        showToast('Exit Processed', `Role: ${roleType} • Fee: ${formatVnd(fee)} • Zone: ${zone.name}`, 'success');
     }
 
     // UC-03 Fee Calculation
@@ -1014,7 +1079,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         pushLog('Finance', currentUser?.id || 'FN01', 'Config Update', 'System', 'Completed', 'Pricing policy activated globally (UC-07)', 'payment');
         renderFinanceLog();
         renderLearnerOverview();
-        alert('✅ Pricing policy activated globally (UC-07).');
+        showToast('Policy Activated', 'Pricing policy activated globally.', 'success');
     }
 
     // UC-08: Refund table
@@ -1076,7 +1141,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const tx = window.HCMUT_DATACORE.transactions.find(t => t.txId === pendingRefundTxId);
         if (!tx) return;
         if (tx.status !== 'Completed') {
-            alert('⚠ UC-08 Error: Transaction is not eligible for refund (already refunded or invalid).');
+            showToast('Refund Error', 'Transaction is not eligible for refund (already refunded or invalid).', 'error');
             return;
         }
         tx.status = 'Refunded';
@@ -1085,7 +1150,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('refund-modal').classList.add('hidden');
         renderRefundTable(document.getElementById('refund-search')?.value || '');
         renderFinanceLog();
-        alert(`✅ Refund of ${formatVnd(tx.amount)} processed for ${tx.userName}.\nReason: ${reason}`);
+        showToast('Refund Processed', `${formatVnd(tx.amount)} refunded to ${tx.userName}. Reason: ${reason}`, 'success');
     }
 
     // =====================================================================
@@ -1185,11 +1250,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     window._assignRole = function(empId) {
         if (currentUser?.roleId !== 'admin') {
-            alert('Only System Admin can assign roles.');
+            showToast('Permission Denied', 'Only System Admin can assign roles.', 'error');
             return;
         }
         if (currentUser?.id === empId) {
-            alert('You cannot change the role of the currently signed-in admin account.');
+            showToast('Not Allowed', 'You cannot change the role of the currently signed-in admin account.', 'warning');
             return;
         }
 
@@ -1200,7 +1265,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!u) return;
 
         if (u.roleId === newRoleId) {
-            alert(`${u.name} already has the ${getRoleLabel(newRoleId)} role.`);
+            showToast('No Change', `${u.name} already has the ${getRoleLabel(newRoleId)} role.`, 'info');
             return;
         }
 
@@ -1218,7 +1283,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         setupGateSimulator();
         renderUserSearchResults(document.getElementById('user-search')?.value || '');
         renderAdminLog();
-        alert(`✅ Role updated for ${u.name}: ${oldRole} → ${newRole}.\nLogin email ${u.email} now opens the ${newRole} dashboard.`);
+        showToast('Role Updated', `${u.name}: ${oldRole} → ${newRole}. Email ${u.email} now opens the ${newRole} dashboard.`, 'success', 5000);
     };
 
     // UC-11: System Parameters
@@ -1245,7 +1310,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         window.HCMUT_DATACORE.pricingConfig.gracePeriodMins = params.gracePeriodMins;
         pushLog('IT/Admin', currentUser?.id || 'AD99', 'Config Push', 'IoT Gateways', 'Completed', 'System params deployed to all gateways (UC-11)', 'manual');
         renderAdminLog();
-        alert('✅ Configuration pushed to IoT Gateways successfully (UC-11).');
+        showToast('Config Pushed', 'Configuration deployed to all IoT Gateways.', 'success');
     }
 
     // =====================================================================
