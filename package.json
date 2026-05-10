@@ -1,0 +1,26 @@
+{
+  "name": "smart-parking-ui",
+  "version": "1.0.0",
+  "description": "HCMUT Smart Parking demo with an Express backend and persistent mock data.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "check": "node --check server.js && node --check server/store.js && node --check server/seed.js && node --check js/app.js && node --check js/mockData.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "smart-parking",
+    "express",
+    "hcmut"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "compression": "^1.7.5",
+    "express": "^4.21.2",
+    "helmet": "^8.1.0",
+    "morgan": "^1.10.0"
+  }
+}

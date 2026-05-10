@@ -1,4 +1,4 @@
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
 
     // =====================================================================
     // STATE
@@ -9,6 +9,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let gateSimulatorBound = false;
     let adminPanelsBound = false;
     let financePanelsBound = false;
+    let backendOnline = false;
+    let saveTimer = null;
 
     // =====================================================================
     // DOM REFS
@@ -67,6 +69,67 @@ document.addEventListener('DOMContentLoaded', () => {
             reason
         });
     }
+
+    function isHttpRuntime() {
+        return window.location.protocol === 'http:' || window.location.protocol === 'https:';
+    }
+
+    function setBackendStatus(online, message) {
+        const statusText = document.querySelector('.status-text');
+        const statusDot = document.querySelector('.status-indicator .dot');
+        if (statusText) statusText.textContent = message;
+        if (statusDot) {
+            statusDot.classList.toggle('pulse-green', online);
+            statusDot.classList.toggle('dot-yellow', !online);
+        }
+        document.body.classList.toggle('backend-online', online);
+        document.body.classList.toggle('backend-offline', !online);
+    }
+
+    async function loadBackendState() {
+        if (!isHttpRuntime()) {
+            setBackendStatus(false, 'Backend: Mock data only');
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/state', { cache: 'no-store' });
+            if (!response.ok) throw new Error(`Backend returned ${response.status}`);
+            window.HCMUT_DATACORE = await response.json();
+            backendOnline = true;
+            setBackendStatus(true, 'Backend: Connected');
+        } catch (error) {
+            console.warn('Falling back to in-browser mock data:', error);
+            backendOnline = false;
+            setBackendStatus(false, 'Backend: Offline, using mock data');
+        }
+    }
+
+    function schedulePersist() {
+        if (!backendOnline) return;
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(persistState, 250);
+    }
+
+    async function persistState() {
+        if (!backendOnline) return;
+
+        try {
+            const response = await fetch('/api/state', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(window.HCMUT_DATACORE)
+            });
+            if (!response.ok) throw new Error(`Save failed with ${response.status}`);
+            setBackendStatus(true, 'Backend: Synced');
+        } catch (error) {
+            console.error('Failed to persist state:', error);
+            backendOnline = false;
+            setBackendStatus(false, 'Backend: Save failed');
+        }
+    }
+
+    await loadBackendState();
 
     // =====================================================================
     // AUTHENTICATION (UC-01 / UC-10 SSO mock)
@@ -574,6 +637,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (window.HCMUT_DATACORE.recentLogs.length > 50) window.HCMUT_DATACORE.recentLogs.pop();
         renderActivityLog();
         renderAdminLog();
+        schedulePersist();
     }
 
     // =====================================================================
