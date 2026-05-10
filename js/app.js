@@ -6,6 +6,9 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentUser = null;
     let liveInterval = null;
     let pendingRefundTxId = null;
+    let gateSimulatorBound = false;
+    let adminPanelsBound = false;
+    let financePanelsBound = false;
 
     // =====================================================================
     // DOM REFS
@@ -27,6 +30,43 @@ document.addEventListener('DOMContentLoaded', () => {
         admin:    document.getElementById('view-admin'),
         signage:  document.getElementById('view-signage')
     };
+
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, char => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;'
+        }[char]));
+    }
+
+    function formatVnd(value) {
+        return `${Number(value || 0).toLocaleString('en-US')} VND`;
+    }
+
+    function csvCell(value) {
+        const str = String(value ?? '');
+        return /[",\r\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+    }
+
+    function toCSV(rows) {
+        return rows.map(row => row.map(csvCell).join(',')).join('\n');
+    }
+
+    function createTransaction({ userId, userName, plate, amount, method, status = 'Completed', reason = '' }) {
+        window.HCMUT_DATACORE.transactions.unshift({
+            txId: 'TX-' + Math.floor(Math.random() * 99999).toString().padStart(5, '0'),
+            userId,
+            userName,
+            plate,
+            amount,
+            time: new Date().toISOString(),
+            status,
+            method,
+            reason
+        });
+    }
 
     // =====================================================================
     // AUTHENTICATION (UC-01 / UC-10 SSO mock)
@@ -65,7 +105,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function logout() {
-        if (liveInterval) clearInterval(liveInterval);
+        if (liveInterval) {
+            clearInterval(liveInterval);
+            liveInterval = null;
+        }
         appContainer.classList.add('hidden');
         document.getElementById('view-signage').classList.add('hidden');
         loginScreen.classList.remove('hidden');
@@ -176,13 +219,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // BKPay payment simulation (UC-03)
     document.getElementById('btn-mock-pay')?.addEventListener('click', () => {
-        const fee = parseInt(document.getElementById('bkpay-amount')?.textContent) || 0;
         const user = currentUser;
-        if (user) {
+        const session = user
+            ? window.HCMUT_DATACORE.activeSessions.find(s => s.userId === user.id)
+            : null;
+        const fee = session ? calculateOutstandingFee(session) : 0;
+
+        if (user && fee > 0) {
+            const unpaid = Math.max(0, fee - user.balance);
             user.balance = Math.max(0, user.balance - fee);
-            if (user.balance < 0) { user.debt += Math.abs(user.balance); user.balance = 0; }
+            user.debt += unpaid;
+            if (session) session.paidAmount = (session.paidAmount || 0) + fee;
+            createTransaction({
+                userId: user.id,
+                userName: user.name,
+                plate: session?.plate || 'N/A',
+                amount: fee,
+                method: 'BKPay'
+            });
         }
-        pushLog('Payment', user?.id || 'N/A', 'BKPay', 'System', 'Completed', `Amount: ${fee} VND`, 'payment');
+        pushLog('Payment', user?.id || 'N/A', 'BKPay', 'System', 'Completed', `Amount: ${formatVnd(fee)}`, 'payment');
         document.getElementById('bkpay-modal').classList.add('hidden');
         document.getElementById('stu-accrued-fee').textContent = '0 VND';
         renderLearnerOverview();
@@ -207,7 +263,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         const balEl = document.getElementById('stu-balance');
-        if (balEl) balEl.textContent = currentUser.balance.toLocaleString('en-US') + ' VND';
+        if (balEl) balEl.textContent = formatVnd(currentUser.balance);
 
         // Current session
         const session = window.HCMUT_DATACORE.activeSessions.find(s => s.userId === currentUser.id);
@@ -218,12 +274,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const mins = Math.floor((Date.now() - new Date(session.entryTime).getTime()) / 60000);
             if (sessionEl) sessionEl.textContent = `${Math.floor(mins/60)}h ${mins%60}m`;
             if (entryEl) entryEl.textContent = new Date(session.entryTime).toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit'});
-            const fee = calculateFee(session);
-            if (feeEl) feeEl.textContent = fee.toLocaleString('en-US') + ' VND';
+            const fee = calculateOutstandingFee(session);
+            if (feeEl) feeEl.textContent = formatVnd(fee);
             const amtEl = document.getElementById('bkpay-amount');
-            if (amtEl) amtEl.textContent = fee.toLocaleString('en-US') + ' VND';
+            if (amtEl) amtEl.textContent = formatVnd(fee);
             const balDisp = document.getElementById('bkpay-balance');
-            if (balDisp) balDisp.textContent = currentUser.balance.toLocaleString('en-US') + ' VND';
+            if (balDisp) balDisp.textContent = formatVnd(currentUser.balance);
         } else {
             if (sessionEl) sessionEl.textContent = 'No active session';
             if (entryEl)   entryEl.textContent   = '—';
@@ -251,13 +307,14 @@ document.addEventListener('DOMContentLoaded', () => {
             const mins = h.durationMins % 60;
             const tr = document.createElement('tr');
             tr.innerHTML = `
-                <td>${h.date}</td>
-                <td>${h.zoneName}</td>
+                <td>${escapeHtml(h.date)}</td>
+                <td>${escapeHtml(h.zoneName)}</td>
                 <td>${hrs}h ${mins}m</td>
-                <td>${h.fee.toLocaleString('en-US')} VND</td>
-                <td><span class="badge badge-success">${h.method}</span></td>
-                <td><button class="btn btn-sm btn-outline" onclick="window._showReceipt('${h.sessionId}')">View</button></td>
+                <td>${formatVnd(h.fee)}</td>
+                <td><span class="badge badge-success">${escapeHtml(h.method)}</span></td>
+                <td><button class="btn btn-sm btn-outline" type="button">View</button></td>
             `;
+            tr.querySelector('button')?.addEventListener('click', () => window._showReceipt(h.sessionId));
             tbody.appendChild(tr);
         });
     }
@@ -274,14 +331,14 @@ document.addEventListener('DOMContentLoaded', () => {
                     <span class="receipt-logo"><i class='bx bxs-parking'></i></span>
                     <strong>HCMUT Parking Receipt</strong>
                 </div>
-                <div class="receipt-row"><span>Transaction ID</span><strong>${h.txId}</strong></div>
-                <div class="receipt-row"><span>Date</span><strong>${h.date}</strong></div>
-                <div class="receipt-row"><span>Zone</span><strong>${h.zoneName}</strong></div>
-                <div class="receipt-row"><span>Entry</span><strong>${h.entryTime}</strong></div>
-                <div class="receipt-row"><span>Exit</span><strong>${h.exitTime}</strong></div>
+                <div class="receipt-row"><span>Transaction ID</span><strong>${escapeHtml(h.txId)}</strong></div>
+                <div class="receipt-row"><span>Date</span><strong>${escapeHtml(h.date)}</strong></div>
+                <div class="receipt-row"><span>Zone</span><strong>${escapeHtml(h.zoneName)}</strong></div>
+                <div class="receipt-row"><span>Entry</span><strong>${escapeHtml(h.entryTime)}</strong></div>
+                <div class="receipt-row"><span>Exit</span><strong>${escapeHtml(h.exitTime)}</strong></div>
                 <div class="receipt-row"><span>Duration</span><strong>${Math.floor(h.durationMins/60)}h ${h.durationMins%60}m</strong></div>
-                <div class="receipt-row total"><span>Total Fee</span><strong>${h.fee.toLocaleString('en-US')} VND</strong></div>
-                <div class="receipt-row"><span>Method</span><strong>${h.method}</strong></div>
+                <div class="receipt-row total"><span>Total Fee</span><strong>${formatVnd(h.fee)}</strong></div>
+                <div class="receipt-row"><span>Method</span><strong>${escapeHtml(h.method)}</strong></div>
                 <div class="receipt-footer">Thank you for using HCMUT Smart Parking</div>
             </div>
         `;
@@ -291,7 +348,10 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('btn-export-history')?.addEventListener('click', () => {
         if (!currentUser) return;
         const history = window.HCMUT_DATACORE.parkingHistory[currentUser.id] || [];
-        const csv = ['Date,Zone,Duration(min),Fee(VND),Method,TxID', ...history.map(h => `${h.date},${h.zoneName},${h.durationMins},${h.fee},${h.method},${h.txId}`)].join('\n');
+        const csv = toCSV([
+            ['Date', 'Zone', 'Duration(min)', 'Fee(VND)', 'Method', 'TxID'],
+            ...history.map(h => [h.date, h.zoneName, h.durationMins, h.fee, h.method, h.txId])
+        ]);
         downloadCSV(csv, `parking_history_${currentUser.id}.csv`);
     });
 
@@ -299,6 +359,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // LIVE SIMULATION
     // =====================================================================
     function startLiveSimulation() {
+        if (liveInterval) clearInterval(liveInterval);
         renderMap();
         renderOperatorDashboard();
         renderSignage();
@@ -338,7 +399,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 div.style.cursor = 'pointer';
                 div.innerHTML = `
                     <div class="zone-header">
-                        <span>${z.name}${z.privileged ? ' <i class="bx bx-lock-alt" title="Privileged"></i>' : ''}</span>
+                        <span>${escapeHtml(z.name)}${z.privileged ? ' <i class="bx bx-lock-alt" title="Privileged"></i>' : ''}</span>
                         <span class="badge ${stat.statusText === 'Full' ? 'badge-error' : stat.statusText === 'Nearly Full' ? 'badge-warn' : 'badge-success'}">${stat.statusText}</span>
                     </div>
                     <div class="sub-text" style="margin-bottom:0.5rem;">${z.capacity - z.occupied} slots left</div>
@@ -366,7 +427,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function openZoneDetails(zone) {
-        document.getElementById('zone-modal-title').innerHTML = `<i class='bx bx-map-pin'></i> ${zone.name} — Spot Map`;
+        document.getElementById('zone-modal-title').innerHTML = `<i class='bx bx-map-pin'></i> ${escapeHtml(zone.name)} — Spot Map`;
         const container = document.getElementById('zone-spots-container');
         container.innerHTML = '';
 
@@ -383,7 +444,7 @@ document.addEventListener('DOMContentLoaded', () => {
             div.className = `spot-item ${isOccupied ? 'spot-occupied' : 'spot-empty'}`;
             if (isOccupied) {
                 div.innerHTML = showPlate
-                    ? `<span>P-${i+1}</span><div class="spot-plate">${generateMockPlate()}</div>`
+                    ? `<span>P-${i+1}</span><div class="spot-plate">${escapeHtml(generateMockPlate())}</div>`
                     : `<span>P-${i+1}</span><small>Occupied</small>`;
             } else {
                 div.innerHTML = `<span>P-${i+1}</span><small>Empty</small>`;
@@ -422,10 +483,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const ok = log.status.includes('OK') || log.status === 'Completed';
             const tr = document.createElement('tr');
             tr.innerHTML = `
-                <td>${log.time}</td>
-                <td>${log.type}<br><small class="sub-text">${log.id}</small></td>
-                <td>${log.gate}<br><small class="sub-text">${log.action}</small></td>
-                <td><span class="badge ${ok ? 'badge-success' : 'badge-error'}">${log.status}</span><br><small class="sub-text">${log.reason || ''}</small></td>
+                <td>${escapeHtml(log.time)}</td>
+                <td>${escapeHtml(log.type)}<br><small class="sub-text">${escapeHtml(log.id)}</small></td>
+                <td>${escapeHtml(log.gate)}<br><small class="sub-text">${escapeHtml(log.action)}</small></td>
+                <td><span class="badge ${ok ? 'badge-success' : 'badge-error'}">${escapeHtml(log.status)}</span><br><small class="sub-text">${escapeHtml(log.reason || '')}</small></td>
             `;
             tbody.appendChild(tr);
         });
@@ -442,11 +503,11 @@ document.addEventListener('DOMContentLoaded', () => {
             const ok = log.status.includes('OK') || log.status === 'Completed';
             const tr = document.createElement('tr');
             tr.innerHTML = `
-                <td>${log.time}</td>
-                <td>${log.type}<br><small class="sub-text">${log.id}</small></td>
-                <td>${log.action}</td>
-                <td><span class="badge ${ok ? 'badge-success' : 'badge-error'}">${log.status}</span></td>
-                <td><small class="sub-text">${log.reason || '—'}</small></td>
+                <td>${escapeHtml(log.time)}</td>
+                <td>${escapeHtml(log.type)}<br><small class="sub-text">${escapeHtml(log.id)}</small></td>
+                <td>${escapeHtml(log.action)}</td>
+                <td><span class="badge ${ok ? 'badge-success' : 'badge-error'}">${escapeHtml(log.status)}</span></td>
+                <td><small class="sub-text">${escapeHtml(log.reason || '—')}</small></td>
             `;
             tbody.appendChild(tr);
         });
@@ -462,11 +523,11 @@ document.addEventListener('DOMContentLoaded', () => {
             .forEach(log => {
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
-                    <td>${log.time}</td>
-                    <td>${log.id}</td>
-                    <td>${log.action}</td>
-                    <td><span class="badge badge-success">${log.status}</span></td>
-                    <td><small class="sub-text">${log.reason || '—'}</small></td>
+                    <td>${escapeHtml(log.time)}</td>
+                    <td>${escapeHtml(log.id)}</td>
+                    <td>${escapeHtml(log.action)}</td>
+                    <td><span class="badge badge-success">${escapeHtml(log.status)}</span></td>
+                    <td><small class="sub-text">${escapeHtml(log.reason || '—')}</small></td>
                 `;
                 tbody.appendChild(tr);
             });
@@ -484,7 +545,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const div = document.createElement('div');
             div.className = 'led-zone-row';
             div.innerHTML = `
-                <span>[${z.id}] ${z.name.toUpperCase()}</span>
+                <span>[${escapeHtml(z.id)}] ${escapeHtml(z.name.toUpperCase())}</span>
                 <span class="led-status ${stat.ledClass}">${(z.capacity - z.occupied).toString().padStart(3,'0')} ${stat.statusText.toUpperCase()}</span>
             `;
             container.appendChild(div);
@@ -554,20 +615,23 @@ document.addEventListener('DOMContentLoaded', () => {
                 opt.textContent = z.name;
                 logFilter.appendChild(opt);
             });
-            logFilter.addEventListener('change', () => renderActivityLog(logFilter.value));
         }
 
-        document.getElementById('btn-sim-entry')?.addEventListener('click', simulateEntry);
-        document.getElementById('btn-sim-exit')?.addEventListener('click', simulateExit);
-        document.getElementById('btn-manual-open')?.addEventListener('click', () => handleException('Manual Gate Release', 'Gate Forced Open'));
-        document.getElementById('btn-manual-deny')?.addEventListener('click', () => handleException('Deny Access', 'Operator Forced Denial'));
-        document.getElementById('btn-restock-dispenser')?.addEventListener('click', () => {
-            window.HCMUT_DATACORE.dispenserStatus.cardsRemaining += 50;
-            updateDispenserUI();
-            pushLog('Operator', currentUser?.id || 'OP00', 'Restock', 'Kiosk', 'Completed', 'Cards restocked (+50) (UC-06)', 'manual');
-            alert('Dispenser restocked with 50 cards. Action logged.');
-        });
-        document.getElementById('btn-issue-visitor')?.addEventListener('click', () => simulateVisitorIssue());
+        if (!gateSimulatorBound) {
+            logFilter?.addEventListener('change', () => renderActivityLog(logFilter.value));
+            document.getElementById('btn-sim-entry')?.addEventListener('click', simulateEntry);
+            document.getElementById('btn-sim-exit')?.addEventListener('click', simulateExit);
+            document.getElementById('btn-manual-open')?.addEventListener('click', () => handleException('Manual Gate Release', 'Gate Forced Open'));
+            document.getElementById('btn-manual-deny')?.addEventListener('click', () => handleException('Deny Access', 'Operator Forced Denial'));
+            document.getElementById('btn-restock-dispenser')?.addEventListener('click', () => {
+                window.HCMUT_DATACORE.dispenserStatus.cardsRemaining += 50;
+                updateDispenserUI();
+                pushLog('Operator', currentUser?.id || 'OP00', 'Restock', 'Kiosk', 'Completed', 'Cards restocked (+50) (UC-06)', 'manual');
+                alert('Dispenser restocked with 50 cards. Action logged.');
+            });
+            document.getElementById('btn-issue-visitor')?.addEventListener('click', simulateVisitorIssue);
+            gateSimulatorBound = true;
+        }
 
         updateDispenserUI();
     }
@@ -584,6 +648,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const zone   = window.HCMUT_DATACORE.parkingZones.find(z => z.id === zoneId);
         let userRole = 'Visitor';
         let isVisitor = false;
+        if (!zone) return alert('⚠ Access Denied: Target zone was not found.');
 
         if (userId === 'VISITOR_NEW') {
             isVisitor = true;
@@ -595,6 +660,11 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
             const u = Object.values(window.HCMUT_DATACORE.users).find(u => u.id === userId);
             if (u) userRole = u.role;
+            const activeSession = window.HCMUT_DATACORE.activeSessions.find(s => s.userId === userId);
+            if (activeSession) {
+                pushLog(userRole, userId, 'Entry', zone.name, 'Denied', 'User already has an active parking session', 'entry');
+                return alert('⚠ Access Denied: This user already has an active parking session.');
+            }
         }
 
         // UC-01: Check capacity
@@ -632,12 +702,24 @@ document.addEventListener('DOMContentLoaded', () => {
         if (window.HCMUT_DATACORE.dispenserStatus.cardsRemaining <= 0) {
             return alert('⚠ Dispenser is empty. Please restock first.');
         }
+        const zoneId = document.getElementById('sim-zone-select')?.value;
+        const zone = window.HCMUT_DATACORE.parkingZones.find(z => z.id === zoneId)
+            || window.HCMUT_DATACORE.parkingZones.find(z => !z.privileged && z.occupied < z.capacity);
+        if (!zone) return alert('⚠ No available public zone for visitor ticket issue.');
+        if (zone.privileged) return alert(`⚠ Access Denied: ${zone.name} is restricted to Faculty/Staff only.`);
+        if (zone.occupied >= zone.capacity) return alert(`⚠ Access Denied: ${zone.name} is at full capacity.`);
+
         const res = confirm('Issue temporary paper ticket and open gate for unregistered visitor?');
         if (!res) return;
         window.HCMUT_DATACORE.dispenserStatus.cardsRemaining--;
         updateDispenserUI();
         const newId = 'VIS-' + Math.floor(Math.random() * 900 + 100);
-        pushLog('Visitor', newId, 'Entry', 'Main Gate', 'Entry OK', 'Manually issued by operator (UC-04)', 'entry');
+        const plate = generateMockPlate();
+        window.HCMUT_DATACORE.activeSessions.push({ sessionId: 'S-' + Date.now(), userId: newId, zoneId: zone.id, isVisitor: true, entryTime: new Date().toISOString(), plate });
+        zone.occupied++;
+        pushLog('Visitor', newId, 'Entry', zone.name, 'Entry OK', `Manually issued by operator, Plate: ${plate} (UC-04)`, 'entry');
+        renderMap();
+        renderOperatorDashboard();
     }
 
     // UC-02: Exit
@@ -654,21 +736,25 @@ document.addEventListener('DOMContentLoaded', () => {
         const zone     = window.HCMUT_DATACORE.parkingZones.find(z => z.id === session.zoneId);
         const userObj  = isVisitorSel ? null : Object.values(window.HCMUT_DATACORE.users).find(u => u.id === session.userId);
         const roleType = session.isVisitor ? 'Visitor' : (userObj?.role || 'Unknown');
-        const fee      = calculateFee(session);
+        const fee      = calculateOutstandingFee(session);
+        if (!zone) return alert('⚠ UC-02 Error: Session zone was not found.');
 
         // UC-03: insufficient balance check
         if (userObj && userObj.balance < fee && !session.isVisitor) {
-            userObj.debt += fee;
-            pushLog(roleType, session.userId, 'Exit', zone.name, 'Exit OK — Debt Recorded', `Insufficient balance, debt: ${fee} VND (UC-03)`, 'exit');
+            const unpaid = fee - userObj.balance;
+            userObj.balance = 0;
+            userObj.debt += unpaid;
+            pushLog(roleType, session.userId, 'Exit', zone.name, 'Exit OK — Debt Recorded', `Insufficient balance, debt: ${formatVnd(unpaid)} (UC-03)`, 'exit');
         } else {
-            window.HCMUT_DATACORE.transactions.unshift({
-                txId: 'TX-' + Math.floor(Math.random() * 99999),
-                userId: session.userId, userName: userObj?.name || 'Visitor',
-                plate: session.plate || 'N/A', amount: fee,
-                time: new Date().toISOString(), status: 'Completed',
-                method: session.isVisitor ? 'Cash' : 'BKPay', reason: ''
+            if (userObj && !session.isVisitor) userObj.balance = Math.max(0, userObj.balance - fee);
+            createTransaction({
+                userId: session.userId,
+                userName: userObj?.name || 'Visitor',
+                plate: session.plate || 'N/A',
+                amount: fee,
+                method: session.isVisitor ? 'Cash' : 'BKPay'
             });
-            pushLog(roleType, session.userId, 'Exit', zone.name, 'Exit OK', `Fee: ${fee} VND, gate opened (UC-02/03)`, 'exit');
+            pushLog(roleType, session.userId, 'Exit', zone.name, 'Exit OK', `Fee: ${formatVnd(fee)}, gate opened (UC-02/03)`, 'exit');
         }
 
         zone.occupied = Math.max(0, zone.occupied - 1);
@@ -676,7 +762,7 @@ document.addEventListener('DOMContentLoaded', () => {
         renderMap();
         renderOperatorDashboard();
         if (currentUser?.roleId === 'student' || currentUser?.roleId === 'staff') renderLearnerOverview();
-        alert(`✅ Exit Processed.\nRole: ${roleType}\nFee: ${fee.toLocaleString('en-US')} VND\nZone: ${zone.name}`);
+        alert(`✅ Exit Processed.\nRole: ${roleType}\nFee: ${formatVnd(fee)}\nZone: ${zone.name}`);
     }
 
     // UC-03 Fee Calculation
@@ -692,6 +778,10 @@ document.addEventListener('DOMContentLoaded', () => {
         return Math.round(cfg.baseFee + Math.floor(durationMins / 60) * cfg.hourlyRate);
     }
 
+    function calculateOutstandingFee(session) {
+        return Math.max(0, calculateFee(session) - (session.paidAmount || 0));
+    }
+
     // UC-06: Exception handling
     function handleException(status, reasonPrefix) {
         const reason = prompt(`UC-06 Exception — Provide reason for [${status}]:`);
@@ -700,11 +790,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // =====================================================================
-    // FINANCE PANEL (UC-07, UC-08)
+    // FINANCE PANEL (UC-07, UC-08, UC-12)
     // =====================================================================
     function setupFinancePanels() {
-        // UC-07: Save pricing
-        document.getElementById('btn-save-pricing')?.addEventListener('click', savePricingPolicy);
+        if (financePanelsBound) {
+            renderRefundTable('');
+            return;
+        }
+
+        // UC-07: Activate pricing
+        document.getElementById('btn-save-pricing')?.addEventListener('click', activatePricingPolicy);
 
         // UC-08: Search refund
         document.getElementById('btn-refund-search')?.addEventListener('click', () => {
@@ -718,9 +813,14 @@ document.addEventListener('DOMContentLoaded', () => {
         // UC-12: export
         document.getElementById('btn-export-finance-log')?.addEventListener('click', () => {
             const logs = window.HCMUT_DATACORE.recentLogs.filter(l => l.category === 'payment');
-            const csv = ['Time,UserID,Action,Status,Reason', ...logs.map(l => `${l.time},${l.id},${l.action},${l.status},${l.reason}`)].join('\n');
+            const csv = toCSV([
+                ['Time', 'UserID', 'Action', 'Status', 'Reason'],
+                ...logs.map(l => [l.time, l.id, l.action, l.status, l.reason])
+            ]);
             downloadCSV(csv, 'finance_audit_log.csv');
         });
+
+        financePanelsBound = true;
 
         // Populate refund table initially
         renderRefundTable('');
@@ -742,28 +842,27 @@ document.addEventListener('DOMContentLoaded', () => {
         setVal('sp-iot-sync', sp.iotSyncIntervalHrs);
     }
 
-    // UC-07: Pricing policy
-    function savePricingPolicy() {
-        const getNum = id => parseFloat(document.getElementById(id)?.value);
-        const vals = {
-            baseFee:             getNum('cfg-base-fee'),
-            hourlyRate:          getNum('cfg-hourly-rate'),
-            gracePeriodMins:     getNum('cfg-grace'),
-            visitorMultiplier:   getNum('cfg-multiplier'),
-            studentSubscription: getNum('cfg-student-sub'),
-            staffSubscription:   getNum('cfg-staff-sub')
+    // UC-07: Pricing policy activation without validation workflow
+    function activatePricingPolicy() {
+        const cfg = window.HCMUT_DATACORE.pricingConfig;
+        const getNum = (id, fallback) => {
+            const val = parseFloat(document.getElementById(id)?.value);
+            return Number.isFinite(val) ? val : fallback;
         };
-        const errEl = document.getElementById('pricing-error');
-        const hasInvalid = Object.values(vals).some(v => isNaN(v) || v < 0) || vals.visitorMultiplier < 1;
-        if (hasInvalid) {
-            if (errEl) errEl.classList.remove('hidden');
-            return;
-        }
-        if (errEl) errEl.classList.add('hidden');
-        Object.assign(window.HCMUT_DATACORE.pricingConfig, vals);
+
+        Object.assign(cfg, {
+            baseFee:             getNum('cfg-base-fee', cfg.baseFee),
+            hourlyRate:          getNum('cfg-hourly-rate', cfg.hourlyRate),
+            gracePeriodMins:     getNum('cfg-grace', cfg.gracePeriodMins),
+            visitorMultiplier:   getNum('cfg-multiplier', cfg.visitorMultiplier),
+            studentSubscription: getNum('cfg-student-sub', cfg.studentSubscription),
+            staffSubscription:   getNum('cfg-staff-sub', cfg.staffSubscription)
+        });
+
         pushLog('Finance', currentUser?.id || 'FN01', 'Config Update', 'System', 'Completed', 'Pricing policy activated globally (UC-07)', 'payment');
         renderFinanceLog();
-        alert('✅ Pricing policy validated and activated globally (UC-07).');
+        renderLearnerOverview();
+        alert('✅ Pricing policy activated globally (UC-07).');
     }
 
     // UC-08: Refund table
@@ -772,9 +871,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const noRes = document.getElementById('refund-no-results');
         if (!tbody) return;
         tbody.innerHTML = '';
-        const q = query.toLowerCase();
+        const q = String(query || '').toLowerCase();
         const txns = window.HCMUT_DATACORE.transactions.filter(t =>
-            !q || t.txId.toLowerCase().includes(q) || t.userId.toLowerCase().includes(q) || t.plate.toLowerCase().includes(q)
+            !q ||
+            String(t.txId || '').toLowerCase().includes(q) ||
+            String(t.userId || '').toLowerCase().includes(q) ||
+            String(t.plate || '').toLowerCase().includes(q)
         );
         if (txns.length === 0) {
             if (noRes) noRes.style.display = 'block';
@@ -785,13 +887,14 @@ document.addEventListener('DOMContentLoaded', () => {
             const canRefund = tx.status === 'Completed';
             const tr = document.createElement('tr');
             tr.innerHTML = `
-                <td>${tx.txId}</td>
-                <td>${tx.userName}<br><small class="sub-text">${tx.userId}</small></td>
-                <td>${tx.amount.toLocaleString('en-US')} VND</td>
-                <td><span class="badge badge-success">${tx.method}</span></td>
-                <td><span class="badge ${tx.status === 'Refunded' ? 'badge-warn' : 'badge-success'}">${tx.status}</span></td>
-                <td>${canRefund ? `<button class="btn btn-sm btn-outline" onclick="window._openRefundModal('${tx.txId}')">Refund</button>` : '<small class="sub-text">—</small>'}</td>
+                <td>${escapeHtml(tx.txId)}</td>
+                <td>${escapeHtml(tx.userName)}<br><small class="sub-text">${escapeHtml(tx.userId)}</small></td>
+                <td>${formatVnd(tx.amount)}</td>
+                <td><span class="badge badge-success">${escapeHtml(tx.method)}</span></td>
+                <td><span class="badge ${tx.status === 'Refunded' ? 'badge-warn' : 'badge-success'}">${escapeHtml(tx.status)}</span></td>
+                <td>${canRefund ? '<button class="btn btn-sm btn-outline" type="button">Refund</button>' : '<small class="sub-text">—</small>'}</td>
             `;
+            tr.querySelector('button')?.addEventListener('click', () => window._openRefundModal(tx.txId));
             tbody.appendChild(tr);
         });
     }
@@ -802,10 +905,10 @@ document.addEventListener('DOMContentLoaded', () => {
         pendingRefundTxId = txId;
         const details = document.getElementById('refund-tx-details');
         if (details) details.innerHTML = `
-            <p><strong>TX ID:</strong> ${tx.txId}</p>
-            <p><strong>User:</strong> ${tx.userName} (${tx.userId})</p>
-            <p><strong>Amount:</strong> ${tx.amount.toLocaleString('en-US')} VND</p>
-            <p><strong>Method:</strong> ${tx.method}</p>
+            <p><strong>TX ID:</strong> ${escapeHtml(tx.txId)}</p>
+            <p><strong>User:</strong> ${escapeHtml(tx.userName)} (${escapeHtml(tx.userId)})</p>
+            <p><strong>Amount:</strong> ${formatVnd(tx.amount)}</p>
+            <p><strong>Method:</strong> ${escapeHtml(tx.method)}</p>
         `;
         document.getElementById('refund-reason-input').value = '';
         document.getElementById('refund-modal-error')?.classList.add('hidden');
@@ -830,13 +933,15 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('refund-modal').classList.add('hidden');
         renderRefundTable(document.getElementById('refund-search')?.value || '');
         renderFinanceLog();
-        alert(`✅ Refund of ${tx.amount.toLocaleString('en-US')} VND processed for ${tx.userName}.\nReason: ${reason}`);
+        alert(`✅ Refund of ${formatVnd(tx.amount)} processed for ${tx.userName}.\nReason: ${reason}`);
     }
 
     // =====================================================================
     // ADMIN PANELS (UC-09, UC-11)
     // =====================================================================
     function setupAdminPanels() {
+        if (adminPanelsBound) return;
+
         document.getElementById('btn-user-search')?.addEventListener('click', () => {
             const q = document.getElementById('user-search')?.value.trim().toLowerCase();
             renderUserSearchResults(q);
@@ -850,9 +955,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
         document.getElementById('btn-export-full-log')?.addEventListener('click', () => {
             const logs = window.HCMUT_DATACORE.recentLogs;
-            const csv = ['Time,Type,ID,Action,Gate,Status,Reason', ...logs.map(l => `${l.time},${l.type},${l.id},${l.action},${l.gate},${l.status},${l.reason}`)].join('\n');
+            const csv = toCSV([
+                ['Time', 'Type', 'ID', 'Action', 'Gate', 'Status', 'Reason'],
+                ...logs.map(l => [l.time, l.type, l.id, l.action, l.gate, l.status, l.reason])
+            ]);
             downloadCSV(csv, 'full_operational_log.csv');
         });
+
+        adminPanelsBound = true;
     }
 
     // UC-09: User search & role management
@@ -860,10 +970,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const container = document.getElementById('user-search-results');
         if (!container) return;
         container.innerHTML = '';
-        if (!query) { container.innerHTML = '<p class="sub-text" style="padding:0.5rem;">Enter an Employee ID or email to search.</p>'; return; }
+        const q = String(query || '').toLowerCase();
+        if (!q) { container.innerHTML = '<p class="sub-text" style="padding:0.5rem;">Enter an Employee ID or email to search.</p>'; return; }
 
         const results = window.HCMUT_DATACORE.userAccounts.filter(u =>
-            u.empId.toLowerCase().includes(query) || u.email.toLowerCase().includes(query) || u.name.toLowerCase().includes(query)
+            String(u.empId || '').toLowerCase().includes(q) ||
+            String(u.email || '').toLowerCase().includes(q) ||
+            String(u.name || '').toLowerCase().includes(q)
         );
 
         if (results.length === 0) {
@@ -872,7 +985,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         const roleOptions = ['student','staff','operator','finance','admin'].map(r =>
-            `<option value="${r}">${window.HCMUT_DATACORE.users[r]?.role || r}</option>`
+            `<option value="${escapeHtml(r)}">${escapeHtml(window.HCMUT_DATACORE.users[r]?.role || r)}</option>`
         ).join('');
 
         results.forEach(u => {
@@ -880,25 +993,26 @@ document.addEventListener('DOMContentLoaded', () => {
             div.className = 'user-result-row';
             div.innerHTML = `
                 <div>
-                    <strong>${u.name}</strong> <small class="sub-text">${u.empId}</small><br>
-                    <small class="sub-text">${u.email}</small>
+                    <strong>${escapeHtml(u.name)}</strong> <small class="sub-text">${escapeHtml(u.empId)}</small><br>
+                    <small class="sub-text">${escapeHtml(u.email)}</small>
                 </div>
                 <div style="display:flex; gap:0.5rem; align-items:center;">
-                    <select class="form-input role-select-inline" data-empid="${u.empId}" style="width:auto; padding:0.4rem; font-size:0.85rem;">
+                    <select class="form-input role-select-inline" data-empid="${escapeHtml(u.empId)}" style="width:auto; padding:0.4rem; font-size:0.85rem;">
                         ${roleOptions}
                     </select>
-                    <button class="btn btn-sm btn-primary" onclick="window._assignRole('${u.empId}')">Assign</button>
+                    <button class="btn btn-sm btn-primary" type="button">Assign</button>
                 </div>
             `;
             // Pre-select current role
             const sel = div.querySelector('.role-select-inline');
             if (sel) sel.value = u.roleId;
+            div.querySelector('button')?.addEventListener('click', () => window._assignRole(u.empId));
             container.appendChild(div);
         });
     }
 
     window._assignRole = function(empId) {
-        const sel = document.querySelector(`.role-select-inline[data-empid="${empId}"]`);
+        const sel = Array.from(document.querySelectorAll('.role-select-inline')).find(el => el.dataset.empid === empId);
         if (!sel) return;
         const newRoleId = sel.value;
         const u = window.HCMUT_DATACORE.userAccounts.find(x => x.empId === empId);
@@ -947,7 +1061,7 @@ document.addEventListener('DOMContentLoaded', () => {
         list.innerHTML = '';
         window.HCMUT_DATACORE.integrations.forEach(int => {
             const li = document.createElement('li');
-            li.innerHTML = `<span>${int.name}</span><span class="${int.ok ? 'badge-success' : 'badge-error'}">${int.status}</span>`;
+            li.innerHTML = `<span>${escapeHtml(int.name)}</span><span class="${int.ok ? 'badge-success' : 'badge-error'}">${escapeHtml(int.status)}</span>`;
             list.appendChild(li);
         });
     }
@@ -958,11 +1072,13 @@ document.addEventListener('DOMContentLoaded', () => {
     function downloadCSV(csv, filename) {
         const blob = new Blob([csv], { type: 'text/csv' });
         const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
+        const url = URL.createObjectURL(blob);
+        a.href = url;
         a.download = filename;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 0);
     }
 
     // =====================================================================

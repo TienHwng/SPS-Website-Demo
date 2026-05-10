@@ -238,3 +238,121 @@
 
 /* ---------- Grid Layouts (additional) ---------- */
 .grid-layout-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.25rem; }
+
+@media (max-width: 900px) {
+  #app-container {
+    min-height: 100vh;
+    height: auto;
+    overflow: auto;
+    flex-direction: column;
+  }
+
+  .glass-sidebar {
+    width: 100%;
+    height: auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .sidebar-header,
+  .user-profile-mini,
+  .sidebar-footer {
+    border: 0;
+  }
+
+  .sidebar-nav {
+    flex: 1 1 100%;
+    order: 4;
+    overflow-x: auto;
+    padding: 0;
+  }
+
+  .sidebar-nav ul {
+    display: flex;
+    min-width: max-content;
+  }
+
+  .nav-item {
+    border-right: 0;
+    border-bottom: 3px solid transparent;
+  }
+
+  .nav-item:hover,
+  .nav-item.active {
+    border-right: 0;
+    border-bottom-color: var(--hcmut-blue);
+  }
+
+  #main-content {
+    overflow: visible;
+  }
+}
+
+@media (max-width: 640px) {
+  .login-box {
+    max-width: calc(100% - 2rem);
+    padding: 1.5rem;
+  }
+
+  .role-card-grid,
+  .grid-layout-2,
+  .grid-layout-3,
+  .grid-layout-4,
+  .map-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .topbar,
+  .padded-view {
+    margin: 0;
+    padding: 1rem;
+  }
+
+  .flex-bw {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+
+  .stat-card {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .glass-card,
+  .glass-panel {
+    padding: 1rem;
+  }
+
+  .table-card,
+  .glass-card {
+    overflow-x: auto;
+  }
+
+  .data-table {
+    min-width: 560px;
+  }
+
+  .led-board {
+    width: 95%;
+    max-height: 90vh;
+  }
+
+  .led-title {
+    font-size: 1.5rem;
+    letter-spacing: 0.08em;
+  }
+
+  .led-zones {
+    padding: 1rem;
+  }
+
+  .led-zone-row {
+    align-items: flex-start;
+    flex-direction: column;
+    font-size: 1rem;
+    gap: 0.35rem;
+  }
+}
